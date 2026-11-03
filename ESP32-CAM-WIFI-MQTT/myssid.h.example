@@ -1,0 +1,10 @@
+// GitHub Configuration Template / Зразок конфігураційного файлу для GitHub
+// Rename this file to "myssid.h" and insert your credentials / Перейменуйте цей файл в "myssid.h" та впишіть свої дані
+
+#ifndef MYSSID_H
+#define MYSSID_H
+
+#define MY_WIFI_SSID "YOUR_WIFI_NAME_HERE"
+#define MY_WIFI_PASS "YOUR_WIFI_PASSWORD_HERE"
+
+#endif
