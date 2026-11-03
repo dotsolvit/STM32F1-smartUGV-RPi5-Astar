@@ -1,0 +1,29 @@
+# === Персональні секрети та приватні матеріали ===
+ESP32-CAM-WIFI-MQTT/myssid.h
+Project-development/
+
+# === Тимчасові файли та кеш операційних систем ===
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
+*.log
+
+# === STM32CubeIDE / GCC Специфічні файли (Відсіюємо зайве) ===
+STM32F103-smartUGV/Debug/
+STM32F103-smartUGV/Release/
+STM32F103-smartUGV/Bin/
+STM32F103-smartUGV/.settings/
+STM32F103-smartUGV/.metadata/
+
+# Логи збірки та прошивки
+*.map
+*.elf
+*.hex
+*.bin
+*.o
+*.d
+*.su
+
+# Файли конфігурації компілятора, які генеруються локально
+STM32F103-smartUGV/*.launch
