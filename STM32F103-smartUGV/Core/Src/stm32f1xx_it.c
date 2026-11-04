@@ -210,8 +210,9 @@ void USART2_IRQHandler(void)
   #define RX_STATE_READ_PATH      3
   #define RX_STATE_WAIT_CRC       4
 
+  // Перевіряємо, чи переривання викликано прийомом байту (RXNE)
   if ((USART2->SR & USART_SR_RXNE) != 0) {
-      uint8_t byte = (uint8_t)(USART2->DR & 0xFF);
+      uint8_t byte = (uint8_t)(USART2->DR & 0xFF); // Читаємо байт і цим скидаємо прапорець RXNE
 
       static uint8_t rx_state = RX_STATE_WAIT_AA;
       static uint8_t current_packet_type = 0;
@@ -231,9 +232,9 @@ void USART2_IRQHandler(void)
           case RX_STATE_WAIT_TYPE:
               current_packet_type = byte;
               data_counter = 0;
-              if (byte == 0xB1) {
+              if (byte == 0xB1) {   // Зловили тип пакета Control
                   rx_state = RX_STATE_READ_CONTROL;
-              } else if (byte == 0xB2) {
+              } else if (byte == 0xB2) { // Зловили тип пакета Path
                   rx_state = RX_STATE_READ_PATH;
               } else {
                   rx_state = RX_STATE_WAIT_AA; // Невідомий тип, скидаємо
