@@ -204,11 +204,105 @@ void SysTick_Handler(void)
 void USART2_IRQHandler(void)
 {
   /* USER CODE BEGIN USART2_IRQn 0 */
+  #define RX_STATE_WAIT_AA        0
+  #define RX_STATE_WAIT_TYPE      1
+  #define RX_STATE_READ_CONTROL   2
+  #define RX_STATE_READ_PATH      3
+  #define RX_STATE_WAIT_CRC       4
 
+  if ((USART2->SR & USART_SR_RXNE) != 0) {
+      uint8_t byte = (uint8_t)(USART2->DR & 0xFF);
+
+      static uint8_t rx_state = RX_STATE_WAIT_AA;
+      static uint8_t current_packet_type = 0;
+      static uint8_t data_counter = 0;
+
+      // Тимчасові буфери для приймання
+      static ControlPacket_t temp_control;
+      static PathPointPacket_t temp_path_pkt;
+
+      switch (rx_state) {
+          case RX_STATE_WAIT_AA:
+              if (byte == 0xAA) {
+                  rx_state = RX_STATE_WAIT_TYPE;
+              }
+              break;
+
+          case RX_STATE_WAIT_TYPE:
+              current_packet_type = byte;
+              data_counter = 0;
+              if (byte == 0xB1) {
+                  rx_state = RX_STATE_READ_CONTROL;
+              } else if (byte == 0xB2) {
+                  rx_state = RX_STATE_READ_PATH;
+              } else {
+                  rx_state = RX_STATE_WAIT_AA; // Невідомий тип, скидаємо
+              }
+              break;
+
+          case RX_STATE_READ_CONTROL:
+              ((uint8_t*)&temp_control)[data_counter++] = byte;
+              if (data_counter >= sizeof(ControlPacket_t)) {
+                  rx_state = RX_STATE_WAIT_CRC;
+              }
+              break;
+
+          case RX_STATE_READ_PATH:
+              ((uint8_t*)&temp_path_pkt)[data_counter++] = byte;
+              if (data_counter >= sizeof(PathPointPacket_t)) {
+                  rx_state = RX_STATE_WAIT_CRC;
+              }
+              break;
+
+          case RX_STATE_WAIT_CRC:
+              if (current_packet_type == 0xB1) {
+                  // Обробка команди Control (1 байт даних)
+                  if (STM32_GetCRC8((uint8_t*)&temp_control.action, 1) == byte) {
+                      if (temp_control.action == 1)      current_robot_state = ROBOT_STATE_MOVING;
+                      else if (temp_control.action == 2) current_robot_state = ROBOT_STATE_STOPPED;
+                      else if (temp_control.action == 3) current_robot_state = ROBOT_STATE_CALIBRATING;
+                  }
+              }
+              else if (current_packet_type == 0xB2) {
+                  // Обробка точки маршруту Path (9 байт даних: x(4) + y(4) + is_last(1))
+                  if (STM32_GetCRC8((uint8_t*)&temp_path_pkt, sizeof(PathPointPacket_t)) == byte) {
+
+                      // Якщо це найперша точка нового потоку — скидаємо старий лічильник безпечно
+                      if (robot_new_path_ready == 1) {
+                          robot_new_path_ready = 0;
+                          robot_path_size = 0;
+                      }
+
+                      // Записуємо точку в масив, якщо є вільне місце
+                      if (robot_path_size < MAX_PATH_POINTS) {
+                          robot_path[robot_path_size].x = temp_path_pkt.x;
+                          robot_path[robot_path_size].y = temp_path_pkt.y;
+                          robot_path_size++;
+
+                          // Якщо ESP32 каже, що це фінальна точка масиву
+                          if (temp_path_pkt.is_last == 1) {
+                              robot_new_path_ready = 1; // Сигнал для main.c: маршрут готовий!
+                          }
+                      }
+                  }
+              }
+              rx_state = RX_STATE_WAIT_AA;
+              break;
+
+          default:
+              rx_state = RX_STATE_WAIT_AA;
+              break;
+      }
+  }
+
+  if ((USART2->SR & (USART_SR_ORE | USART_SR_NE | USART_SR_FE)) != 0) {
+      volatile uint32_t dummy = USART2->DR;
+      (void)dummy;
+  }
+  return;
   /* USER CODE END USART2_IRQn 0 */
   HAL_UART_IRQHandler(&huart2);
   /* USER CODE BEGIN USART2_IRQn 1 */
-
   /* USER CODE END USART2_IRQn 1 */
 }
 

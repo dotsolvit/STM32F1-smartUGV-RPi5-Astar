@@ -26,7 +26,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h> // Для printf
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -47,7 +47,15 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+// Виділяємо пам'ять під стан робота. Початковий стан — СТОП.
+volatile RobotState_t current_robot_state = ROBOT_STATE_STOPPED;
 
+// Виділяємо пам'ять під маршрут робота.
+volatile PathPoint_t robot_path[MAX_PATH_POINTS];
+volatile uint8_t robot_path_size = 0;
+volatile uint8_t robot_new_path_ready = 0;
+
+volatile uint8_t wrm=0; //Тимчасова - для перевірки
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -104,36 +112,18 @@ int main(void)
   MX_TIM3_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  HAL_StatusTypeDef result;
-  uint8_t i;
-
-  // Початок сканування
-  printf("\n Starting I2C scan...\r\n");
-
-  for(i=1; i<128; i++)
-  {
-    // HAL_I2C_IsDeviceReady перевіряє, чи відповідає пристрій на вказаній адресі
-    // Зсуваємо адресу на 1 біт вліво, бо HAL приймає 8-бітну адресу (7 біт адреси + біт R/W)
-    result = HAL_I2C_IsDeviceReady(&hi2c2, (uint8_t)(i << 1), 1, 10);
-
-    if (result == HAL_OK)
-    {
-        // Пристрій знайдено — вивести адресу
-    	printf("I2C device found at address 0x%02X\r\n", i);
-    }
-  }
-
-  // Завершення сканування
-  printf("I2C scan completed.\r\n");
+  __HAL_UART_ENABLE_IT(&huart2, UART_IT_RXNE); // Вмикаємо переривання по прийому байта
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	//printf("\r\n=== STM32F103 Robot Test ===\r\n");
-	//HAL_Delay(100);
-
+	 if(current_robot_state == ROBOT_STATE_MOVING){
+	  current_robot_state = ROBOT_STATE_STOPPED;
+	  wrm +=1; //Тимчасова - для перевірки
+	  HAL_Delay(10);
+	}
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -202,6 +192,7 @@ void Error_Handler(void)
   __disable_irq();
   while (1)
   {
+
   }
   /* USER CODE END Error_Handler_Debug */
 }
