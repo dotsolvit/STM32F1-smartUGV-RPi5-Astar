@@ -59,11 +59,11 @@ volatile uint8_t robot_new_path_ready = 0;
 uint32_t last_telemetry_tick = 0;
 const uint32_t TELEMETRY_INTERVAL_MS = 50;
 
-// Глобальні змінні стану (які наповнюються з MPU6050, одометрії та АЦП)
-float current_x = 0.0f;
-float current_y = 0.0f;
-float current_theta_deg = 0.0f;
-uint8_t current_battery_pct = 100;
+// Глобальні змінні стану робота (для демонстрації інтеграції)
+float robot_x = 4.0f;
+float robot_y = 4.0f;
+float robot_theta_deg = 90.0f;
+uint8_t robot_battery_pct = 80;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -81,14 +81,14 @@ void STM32_SendTelemetry(float x, float y, float theta, uint8_t battery, RobotSt
     pkt.battery_pct = battery;
     pkt.status_code = (uint8_t)state;
 
-    // Рахуємо CRC8 від байта хедера 0x01 до кінця корисних даних (разом 14 байт)
-    // Передаємо вказівник на pkt.header2
-    pkt.crc8 = STM32_GetCRC8((uint8_t*)&pkt.header2, 14);
+    // Рахуємо від першого корисного поля (x) до самого кінця структури
+    uint16_t data_size = sizeof(UartTelemetryPacket_t) - 3;
+    pkt.crc8 = STM32_GetCRC8((uint8_t*)&pkt.x, data_size);
 
     // Побайтова швидка відправка в регістр USART2
     uint8_t *pData = (uint8_t*)&pkt;
     for (uint8_t i = 0; i < sizeof(UartTelemetryPacket_t); i++) {
-        while ((USART2->SR & USART_SR_TXE) == 0); // Чекаємо звільнення буфера передачі (одиниці мікросекунд)
+        while ((USART2->SR & USART_SR_TXE) == 0);
         USART2->DR = pData[i];
     }
 }
@@ -102,8 +102,9 @@ void STM32_SendScanPoint(int16_t angle, uint16_t distance_mm, uint8_t is_last) {
     pkt.distance_mm = distance_mm;
     pkt.is_end_of_scan = is_last;
 
-    // Рахуємо CRC8 від pkt.header2 до кінця даних (разом 5 байт)
-    pkt.crc8 = STM32_GetCRC8((uint8_t*)&pkt.header2, 5);
+    // Рахуємо від першого корисного поля (angle) до самого кінця структури
+    uint16_t data_size = sizeof(UartScanPacket_t) - 3;
+    pkt.crc8 = STM32_GetCRC8((uint8_t*)&pkt.angle, data_size);
 
     uint8_t *pData = (uint8_t*)&pkt;
     for (uint8_t i = 0; i < sizeof(UartScanPacket_t); i++) {
@@ -163,14 +164,24 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	 //if(current_robot_state == ROBOT_STATE_MOVING){
-	 // current_robot_state = ROBOT_STATE_STOPPED;
-	 // wrm +=1; //Тимчасова - для перевірки
-	 // HAL_Delay(10);
-	 //}
-    /* USER CODE END WHILE */
 
-    /* USER CODE BEGIN 3 */
+	  uint32_t current_tick = HAL_GetTick();
+
+      // Асинхронний таймер відправки телеметрії кожні 50 мс
+      if (current_tick - last_telemetry_tick >= TELEMETRY_INTERVAL_MS)
+      {
+          last_telemetry_tick = current_tick;
+
+          // Виклик вашої функції відправки з актуальними даними
+          STM32_SendTelemetry(robot_x, robot_y, robot_theta_deg, robot_battery_pct, current_robot_state);
+      }
+
+      // Логіка сканування перешкод (викликається покроково за логікою TIM1 сервоприводу)
+      // Наприклад, коли серва стала в точку і Sharp зняв АЦП:
+      // STM32_SendScanPoint(current_servo_angle, current_distance_mm, is_last_point);
+
+      /* USER CODE END WHILE */
+      /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }

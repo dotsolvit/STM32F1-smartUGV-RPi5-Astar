@@ -51,26 +51,26 @@ struct PathPointPacket {
     uint8_t crc8;
 };
 
-// Пакет 3: Телеметрія від STM32 (Для відправки в robot/telemetry)
+// Пакет 3: Телеметрія від STM32 (НОВА СТРУКТУРА: CRC перенесено наперед)
 struct UartTelemetryPacket {
-    uint8_t header1;       // Має бути 0xDE
-    uint8_t header2;       // Має бути 0x01
+    uint8_t header1;       // 0xDE
+    uint8_t header2;       // 0x01
+    uint8_t crc8;          // Контрольна сума всього, що йде далі
     float x;
     float y;
     float theta_deg;
     uint8_t battery_pct;
     uint8_t status_code;   // 0-stopped, 1-moving, 2-scanning, 3-calibrating, 4-arrived
-    uint8_t crc8;
 };
 
-// Пакет 4: Сканування перешкод від STM32 (Для відправки в robot/obstacle_scan)
+// Пакет 4: Сканування перешкод від STM32 (НОВА СТРУКТУРА: CRC перенесено наперед)
 struct UartScanPacket {
-    uint8_t header1;       // Має бути 0xDE
-    uint8_t header2;       // Має бути 0x02
+    uint8_t header1;       // 0xDE
+    uint8_t header2;       // 0x02
+    uint8_t crc8;          // Контрольна сума всього, що йде далі
     int16_t angle;         // Поточний кут голови (-90...90)
     uint16_t distance_mm;  // Відстань в мм
     uint8_t is_end_of_scan;// 1 якщо це останній вимір панорами
-    uint8_t crc8;
 };
 #pragma pack(pop)
 
@@ -134,88 +134,126 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 // --- ПРИЙОМ ДАНИХ ВІД STM32 (UART -> ESP32 -> MQTT RPi5) ---
+enum RxState { WAIT_H1, WAIT_H2, READ_DATA };
+
 void handleUartRx() {
+    static RxState state = WAIT_H1;
     static uint8_t rx_buf[64];
     static uint8_t rx_idx = 0;
+    static uint8_t expected_len = 0;
+    
+    // Статичні масиви для збору повної панорами
+    static int16_t scan_angles[MAX_SCAN_POINTS];
+    static int32_t scan_distances[MAX_SCAN_POINTS];
+    static uint8_t scan_count = 0;
     
     while (Serial.available() > 0) {
         uint8_t b = Serial.read();
         
-        // Шукаємо стартовий маркер пакетів від STM32 (0xDE)
-        if (rx_idx == 0 && b != 0xDE) continue;
-        
-        rx_buf[rx_idx++] = b;
-        
-        // Визначаємо тип пакета за другим байтом
-        if (rx_idx >= 2) {
-            uint8_t type = rx_buf[1];
-            
-            // Тип 1: Пакет Телеметрії (Розмір структури UartTelemetryPacket = 17 байт)
-            if (type == 0x01 && rx_idx >= 17) {
-                if (getCRC8(&rx_buf[2], 14) == rx_buf[16]) { // CRC від даних
-                    UartTelemetryPacket* p = (UartTelemetryPacket*)rx_buf;
-                    
-                    const char* status_strings[] = {"stopped", "moving", "scanning", "calibrating", "arrived"};
-                    const char* current_status = (p->status_code < 5) ? status_strings[p->status_code] : "stopped";
-                    
-                    StaticJsonDocument<256> jsonDoc;
-                    jsonDoc["x"] = p->x;
-                    jsonDoc["y"] = p->y;
-                    jsonDoc["theta_deg"] = p->theta_deg;
-                    jsonDoc["battery_pct"] = p->battery_pct;
-                    jsonDoc["status"] = current_status;
-                    
-                    char out_buf[256];
-                    serializeJson(jsonDoc, out_buf);
-                    client.publish("robot/telemetry", out_buf);
+        switch (state) {
+            case WAIT_H1:
+                if (b == 0xDE) {
+                    rx_buf[0] = b;
+                    rx_idx = 1;
+                    state = WAIT_H2;
                 }
-                rx_idx = 0;
-            }
-            // Тип 2: Пакет Обходу Перешкод (Буферуємо та надсилаємо панораму за один раз)
-            else if (type == 0x02 && rx_idx >= 8) {
-                if (getCRC8(&rx_buf[2], 5) == rx_buf[7]) {
-                    UartScanPacket* p = (UartScanPacket*)rx_buf;
+                break;
+                
+            case WAIT_H2:
+                rx_buf[rx_idx++] = b;
+                if (b == 0x01) {       // Зловили телеметрію
+                    expected_len = sizeof(UartTelemetryPacket); // Авто-розмір
+                    state = READ_DATA;
+                } else if (b == 0x02) { // Зловили точку сканування
+                    expected_len = sizeof(UartScanPacket);      // Авто-розмір
+                    state = READ_DATA;
+                } else {
+                    state = WAIT_H1;   // Невідомий підтип пакету, скидаємо
+                }
+                break;
+                
+            case READ_DATA:
+                rx_buf[rx_idx++] = b;
+                
+                // Чекаємо накопичення повної структури в буфері
+                if (rx_idx >= expected_len) {
+                    uint8_t type = rx_buf[1]; // Дивимось на тип пакету
                     
-                    // Статичні масиви для збору повної панорами
-                    static int16_t scan_angles[MAX_SCAN_POINTS];
-                    static int32_t scan_distances[MAX_SCAN_POINTS];
-                    static uint8_t scan_count = 0;
-
-                    if (scan_count < MAX_SCAN_POINTS) {
-                        scan_angles[scan_count] = p->angle;
-                        scan_distances[scan_count] = p->distance_mm;
-                        scan_count++;
-                    }
-
-                    // Якщо STM32 сигналізує, що панорама завершена (або буфер заповнений)
-                    if (p->is_end_of_scan == 1 || scan_count >= MAX_SCAN_POINTS) {
-                        // Використовуємо чітко визначений розмір для ArduinoJson
-                        StaticJsonDocument<JSON_BUF_SIZE> scanDoc;
-                        JsonArray angles_arr = scanDoc.createNestedArray("angles");
-                        JsonArray dist_arr = scanDoc.createNestedArray("distances");
-
-                        for (uint8_t i = 0; i < scan_count; i++) {
-                            angles_arr.add(scan_angles[i]);
-                            dist_arr.add(scan_distances[i]);
+                    // --- ОБРОБКА ПАКЕТУ ТЕЛЕМЕТРІЇ (0x01) ---
+                    if (type == 0x01) {
+                        UartTelemetryPacket* p = (UartTelemetryPacket*)rx_buf;
+                        uint16_t data_size = sizeof(UartTelemetryPacket) - 3;
+                        
+                        // Автоматичний підрахунок CRC8 від поля x до кінця структури
+                        if (getCRC8((uint8_t*)&p->x, data_size) == p->crc8) {
+                            
+                            const char* status_strings[] = {"stopped", "moving", "scanning", "calibrating", "arrived"};
+                            const char* current_status = (p->status_code < 5) ? status_strings[p->status_code] : "stopped";
+                            
+                            // Синтаксис ArduinoJson v7 (Універсальний JsonDocument)
+                            JsonDocument jsonDoc;
+                            jsonDoc["x"] = p->x;
+                            jsonDoc["y"] = p->y;
+                            jsonDoc["theta_deg"] = p->theta_deg;
+                            jsonDoc["battery_pct"] = p->battery_pct;
+                            jsonDoc["status"] = current_status;
+                            
+                            char out_buf[256];
+                            serializeJson(jsonDoc, out_buf);
+                            client.publish("robot/telemetry", out_buf);
                         }
-
-                        char out_buf[JSON_BUF_SIZE]; // Задаємо масив фіксованого розміру
-                        serializeJson(scanDoc, out_buf, sizeof(out_buf));
-                        client.publish("robot/obstacle_scan", out_buf);
-
-                        scan_count = 0; // Скидаємо накопичувач для наступного сканування
                     }
-
+                    
+                    // --- ОБРОБКА ПАКЕТУ С КАНУВАННЯ (0x02) ---
+                    else if (type == 0x02) {
+                        UartScanPacket* p = (UartScanPacket*)rx_buf;
+                        uint16_t data_size = sizeof(UartScanPacket) - 3;
+                        
+                        // Автоматичний підрахунок CRC8 від поля angle до кінця структури
+                        if (getCRC8((uint8_t*)&p->angle, data_size) == p->crc8) {
+                            
+                            if (scan_count < MAX_SCAN_POINTS) {
+                                scan_angles[scan_count] = p->angle;
+                                scan_distances[scan_count] = p->distance_mm;
+                                scan_count++;
+                            }
+                            
+                            // Якщо це фінальна точка або переповнення буфера буферизації
+                            if (p->is_end_of_scan == 1 || scan_count >= MAX_SCAN_POINTS) {
+                                
+                                // Синтаксис ArduinoJson v7 для створення масивів
+                                JsonDocument scanDoc;
+                                JsonArray angles_arr = scanDoc["angles"].to<JsonArray>();
+                                JsonArray dist_arr = scanDoc["distances"].to<JsonArray>();
+                                
+                                for (uint8_t i = 0; i < scan_count; i++) {
+                                    angles_arr.add(scan_angles[i]);
+                                    dist_arr.add(scan_distances[i]);
+                                }
+                                
+                                char out_buf[JSON_BUF_SIZE];
+                                serializeJson(scanDoc, out_buf, sizeof(out_buf));
+                                client.publish("robot/obstacle_scan", out_buf);
+                                
+                                scan_count = 0; // Скидаємо накопичувач панорами
+                            }
+                        }
+                    }
+                    
+                    // Після обробки (або якщо CRC не збігся) повертаємось в очікування
+                    state = WAIT_H1;
                 }
-                rx_idx = 0;
-            }
-            // Захист від переповнення буфера при смітті в ефірі
-            else if (rx_idx >= 64) {
-                rx_idx = 0;
-            }
+                break;
+        }
+        
+        // Захист від критичного виходу за межі буфера
+        if (rx_idx >= 64) {
+            rx_idx = 0;
+            state = WAIT_H1;
         }
     }
 }
+
 
 void setup() {
     // UART0 ініціалізація (Швидкість зв'язку з STM32)
