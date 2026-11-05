@@ -55,23 +55,67 @@ volatile PathPoint_t robot_path[MAX_PATH_POINTS];
 volatile uint8_t robot_path_size = 0;
 volatile uint8_t robot_new_path_ready = 0;
 
-volatile uint8_t wrm=0; //Тимчасова - для перевірки
+//Організація асинхронного таймера відправки (50 мс)
+uint32_t last_telemetry_tick = 0;
+const uint32_t TELEMETRY_INTERVAL_MS = 50;
+
+// Глобальні змінні стану (які наповнюються з MPU6050, одометрії та АЦП)
+float current_x = 0.0f;
+float current_y = 0.0f;
+float current_theta_deg = 0.0f;
+uint8_t current_battery_pct = 100;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
+// Асинхронна відправка телеметрії (викликається по таймеру кожні 50 мс)
+void STM32_SendTelemetry(float x, float y, float theta, uint8_t battery, RobotState_t state) {
+    UartTelemetryPacket_t pkt;
+    pkt.header1 = 0xDE;
+    pkt.header2 = 0x01;
+    pkt.x = x;
+    pkt.y = y;
+    pkt.theta_deg = theta;
+    pkt.battery_pct = battery;
+    pkt.status_code = (uint8_t)state;
+
+    // Рахуємо CRC8 від байта хедера 0x01 до кінця корисних даних (разом 14 байт)
+    // Передаємо вказівник на pkt.header2
+    pkt.crc8 = STM32_GetCRC8((uint8_t*)&pkt.header2, 14);
+
+    // Побайтова швидка відправка в регістр USART2
+    uint8_t *pData = (uint8_t*)&pkt;
+    for (uint8_t i = 0; i < sizeof(UartTelemetryPacket_t); i++) {
+        while ((USART2->SR & USART_SR_TXE) == 0); // Чекаємо звільнення буфера передачі (одиниці мікросекунд)
+        USART2->DR = pData[i];
+    }
+}
+
+// Асинхронна відправка однієї точки сканування перешкод
+void STM32_SendScanPoint(int16_t angle, uint16_t distance_mm, uint8_t is_last) {
+    UartScanPacket_t pkt;
+    pkt.header1 = 0xDE;
+    pkt.header2 = 0x02;
+    pkt.angle = angle;
+    pkt.distance_mm = distance_mm;
+    pkt.is_end_of_scan = is_last;
+
+    // Рахуємо CRC8 від pkt.header2 до кінця даних (разом 5 байт)
+    pkt.crc8 = STM32_GetCRC8((uint8_t*)&pkt.header2, 5);
+
+    uint8_t *pData = (uint8_t*)&pkt;
+    for (uint8_t i = 0; i < sizeof(UartScanPacket_t); i++) {
+        while ((USART2->SR & USART_SR_TXE) == 0);
+        USART2->DR = pData[i];
+    }
+}
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-int __io_putchar(int ch) {
-    // Відправляємо 1 байт через USART2 з таймаутом (тут блокуючий виклик для дебагу прийнятний)
-    HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
-    return ch;
-}
 
 /* USER CODE END 0 */
 
@@ -119,11 +163,11 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	 if(current_robot_state == ROBOT_STATE_MOVING){
-	  current_robot_state = ROBOT_STATE_STOPPED;
-	  wrm +=1; //Тимчасова - для перевірки
-	  HAL_Delay(10);
-	}
+	 //if(current_robot_state == ROBOT_STATE_MOVING){
+	 // current_robot_state = ROBOT_STATE_STOPPED;
+	 // wrm +=1; //Тимчасова - для перевірки
+	 // HAL_Delay(10);
+	 //}
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

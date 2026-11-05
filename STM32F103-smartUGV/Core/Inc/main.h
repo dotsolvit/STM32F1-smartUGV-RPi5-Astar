@@ -66,6 +66,30 @@ typedef struct {
     uint8_t is_last;
 } PathPointPacket_t;
 #pragma pack(pop)
+
+// Пакет для відправки 1: Телеметрія для robot/telemetry (Розмір: 17 байт)
+#pragma pack(push, 1)
+typedef struct {
+    uint8_t header1;       // Має бути 0xDE
+    uint8_t header2;       // Має бути 0x01
+    float x;
+    float y;
+    float theta_deg;
+    uint8_t battery_pct;
+    uint8_t status_code;   // 0-stopped, 1-moving, 2-scanning, 3-calibrating, 4-arrived
+    uint8_t crc8;
+} UartTelemetryPacket_t;
+
+// Пакет для відправки 2: Одиничний вимір для robot/obstacle_scan (Розмір: 8 байт)
+typedef struct {
+    uint8_t header1;       // Має бути 0xDE
+    uint8_t header2;       // Має бути 0x02
+    int16_t angle;         // Поточний кут голови (-90...90)
+    uint16_t distance_mm;  // Відстань в мм від Sharp
+    uint8_t is_end_of_scan;// 1 якщо це остання точка панорами, інакше 0
+    uint8_t crc8;
+} UartScanPacket_t;
+#pragma pack(pop)
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
