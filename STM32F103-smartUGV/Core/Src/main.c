@@ -26,7 +26,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "telemetry_module.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -158,6 +158,7 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   __HAL_UART_ENABLE_IT(&huart2, UART_IT_RXNE); // Вмикаємо переривання по прийому байта
+  Telemetry_Init(); // Ініціалізуємо таймери, одометрію та сенсори
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -165,20 +166,20 @@ int main(void)
   while (1)
   {
 
-	  uint32_t current_tick = HAL_GetTick();
+		// 1. Постійно оновлюємо математику телеметрії (всередині неблокуючі автомати)
+		Telemetry_Update();
 
-      // Асинхронний таймер відправки телеметрії кожні 50 мс
-      if (current_tick - last_telemetry_tick >= TELEMETRY_INTERVAL_MS)
-      {
-          last_telemetry_tick = current_tick;
+		// 2. Асинхронний таймер відправки результатів на RPi5 через ESP32 кожні 50 мс
+		uint32_t current_tick = HAL_GetTick();
+		if (current_tick - last_telemetry_tick >= TELEMETRY_INTERVAL_MS)
+		{
+			last_telemetry_tick = current_tick;
 
-          // Виклик вашої функції відправки з актуальними даними
-          STM32_SendTelemetry(robot_x, robot_y, robot_theta_deg, robot_battery_pct, current_robot_state);
-      }
+			// Відправляємо чисті, синхронізовані дані з модуля телеметрії
+			STM32_SendTelemetry(robot_x, robot_y, robot_theta_deg, robot_battery_pct, current_robot_state);
+		}
 
-      // Логіка сканування перешкод (викликається покроково за логікою TIM1 сервоприводу)
-      // Наприклад, коли серва стала в точку і Sharp зняв АЦП:
-      // STM32_SendScanPoint(current_servo_angle, current_distance_mm, is_last_point);
+		// Тут буде логіка Модуля Пілота...
 
       /* USER CODE END WHILE */
       /* USER CODE BEGIN 3 */
