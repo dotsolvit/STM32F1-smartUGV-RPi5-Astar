@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
+#include "dma.h"
 #include "i2c.h"
 #include "tim.h"
 #include "usart.h"
@@ -27,6 +28,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "telemetry_module.h"
+#include "pilot_module.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -47,8 +49,9 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-// Виділяємо пам'ять під стан робота. Початковий стан — СТОП.
+// Виділяємо пам'ять під стан та статус робота. Початковий стан і статус — СТОП.
 volatile RobotState_t current_robot_state = ROBOT_STATE_STOPPED;
+volatile RobotStatus_t current_robot_status = ROBOT_STATUS_STOPPED;
 
 // Виділяємо пам'ять під маршрут робота.
 volatile PathPoint_t robot_path[MAX_PATH_POINTS];
@@ -56,7 +59,7 @@ volatile uint8_t robot_path_size = 0;
 volatile uint8_t robot_new_path_ready = 0;
 
 //Організація асинхронного таймера відправки (50 мс)
-uint32_t last_telemetry_tick = 0;
+volatile uint32_t last_telemetry_tick = 0;
 const uint32_t TELEMETRY_INTERVAL_MS = 50;
 
 // Глобальні змінні стану робота (для демонстрації інтеграції)
@@ -64,6 +67,10 @@ float robot_x = 4.0f;
 float robot_y = 4.0f;
 float robot_theta_deg = 90.0f;
 uint8_t robot_battery_pct = 80;
+
+// Глобальна змінна для Модуля Пілота (щоб він міг бачити відстань у реальному часі)
+volatile uint16_t sharp_distance_raw_adc = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -149,6 +156,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_TIM1_Init();
   MX_TIM4_Init();
   MX_ADC1_Init();
@@ -157,8 +165,17 @@ int main(void)
   MX_TIM3_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+  HAL_Delay(300); // Даємо 300 мс на заряд конденсаторів та старт периферії
   __HAL_UART_ENABLE_IT(&huart2, UART_IT_RXNE); // Вмикаємо переривання по прийому байта
+  //Ініціалізуємо ADC:
+  ADC_UserInit();
+  //if (ADC_UserInit() != HAL_OK)
+  //{
+  //    Error_Handler();
+  //}
   Telemetry_Init(); // Ініціалізуємо таймери, одометрію та сенсори
+  Pilot_Init();     // Запуск ШІМ моторів
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET); //Вмикаю індикацію завершення ініціалізації
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -169,20 +186,51 @@ int main(void)
 		// 1. Постійно оновлюємо математику телеметрії (всередині неблокуючі автомати)
 		Telemetry_Update();
 
-		// 2. Асинхронний таймер відправки результатів на RPi5 через ESP32 кожні 50 мс
-		uint32_t current_tick = HAL_GetTick();
+	    // 2. Розрахунок плавного руху коліс
+	    Pilot_Update();
+
+
+		// 3. Асинхронний таймер відправки результатів на RPi5 через ESP32 кожні 50 мс
+	    volatile uint32_t current_tick = HAL_GetTick();
 		if (current_tick - last_telemetry_tick >= TELEMETRY_INTERVAL_MS)
 		{
 			last_telemetry_tick = current_tick;
 
 			// Відправляємо чисті, синхронізовані дані з модуля телеметрії
-			STM32_SendTelemetry(robot_x, robot_y, robot_theta_deg, robot_battery_pct, current_robot_state);
+			STM32_SendTelemetry(robot_x, robot_y, robot_theta_deg, robot_battery_pct, current_robot_status);
 		}
 
-		// Тут буде логіка Модуля Пілота...
+	    // 4. Логіка виконання команд (наприклад, якщо з MQTT прийшов "start")
+	    if (current_robot_state == ROBOT_STATE_MOVING) {
+	    	current_robot_status = ROBOT_STATUS_MOVING;
+	        // Тимчасовий тестовий запуск: їхати вперед на 50% швидкості
+	        Pilot_SetTargetSpeed(70, 70);
+	    } else if (current_robot_state == ROBOT_STATE_STOPPED) {
+	        Pilot_SetTargetSpeed(0, 0);
+	        //Статус зміниться після повної зупинки
+	    }
+	    else if (current_robot_state == ROBOT_STATE_CALIBRATING) {
+	    	current_robot_status = ROBOT_STATUS_CALIBRATING;
+	        STM32_SendTelemetry(robot_x, robot_y, robot_theta_deg, robot_battery_pct, current_robot_status); //Повідомимо про новий стан
+	        Pilot_SetTargetSpeed(-75, 75);
+	        // Даємо плавному розгону 900 мс, щоб мотори гарантовано вийшли на оберти
+	        uint32_t ramp_start = HAL_GetTick();
+	        while (HAL_GetTick() - ramp_start < 900) {
+	            Pilot_Update();
+	        }
+	        // Тепер робот стабільно крутиться, запускаємо блокуюче калібрування на 6 с
+	        Telemetry_Calibration();
+            //Відміняємо команду Калібрувати на Стоп
+	        current_robot_state = ROBOT_STATE_STOPPED;
+	        current_robot_status = ROBOT_STATUS_MOVING;//До зупинки
+	        // Зупиняємо двигуни та повертаємось у стан очікування
+	        Pilot_SetTargetSpeed(0, 0);
+	        //Статус зміниться після повної зупинки
+	    }
 
-      /* USER CODE END WHILE */
-      /* USER CODE BEGIN 3 */
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }
@@ -234,7 +282,27 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+// Викликається після успішного завершення HAL_I2C_Mem_Write_IT
+void HAL_I2C_MemTxCpltCallback(I2C_HandleTypeDef *hi2c) {
+    if (hi2c == hmpu1.hi2c) {
+        MPU6050_I2C_MemTxCpltCallback(&hmpu1);
+    }
+}
 
+// Викликається після успішного завершення HAL_I2C_Mem_Read_DMA
+void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
+    if (hi2c == hmpu1.hi2c) {
+        MPU6050_I2C_MemRxCpltCallback(&hmpu1);
+    }
+}
+
+// Обробка помилок на шині I2C
+void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c) {
+    if (hi2c == hmpu1.hi2c) {
+        hmpu1.state = MPU_STATE_ERROR;
+        hmpu1.i2c_busy = 0;
+    }
+}
 /* USER CODE END 4 */
 
 /**

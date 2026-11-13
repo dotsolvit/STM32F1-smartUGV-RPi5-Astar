@@ -100,6 +100,49 @@ void MPU6050_I2C_MemRxCpltCallback(MPU6050_HandleTypeDef *dev) {
     }
 }
 
+//Оновлена функція - Додав перевірку на MPU_STATE_ERROR із можливістю повторного перезапуску
+// або безпечного виходу з циклу (щоб робот не зависав):
+void MPU6050_Calibrate_Gyro_Z(MPU6050_HandleTypeDef *dev, uint16_t samples) {
+    int32_t sum = 0;
+    uint16_t i = 0;
+    uint32_t timeout_start = HAL_GetTick(); // Таймаут на випадок апаратного зависання шини
+
+    while (i < samples) {
+        // Захист від вічного зависання (якщо калібрування триває більше 5 секунд - виходимо)
+        if (HAL_GetTick() - timeout_start > 5000) {
+            break;
+        }
+
+        if (dev->state == MPU_STATE_READY) {
+            dev->state = MPU_STATE_READING_DATA;
+
+            while(dev->state != MPU_STATE_READY && dev->state != MPU_STATE_ERROR) {
+                MPU6050_Process_State(dev);
+            }
+
+            if (dev->state == MPU_STATE_READY) {
+                sum += dev->raw_data.gyro_z;
+                i++;
+                HAL_Delay(5);
+            }
+        } else if (dev->state == MPU_STATE_ERROR) {
+            // Якщо шина спіймала помилку - скидаємо прапорець і пробуємо знову
+            dev->i2c_busy = 0;
+            dev->state = MPU_STATE_READY;
+            HAL_Delay(10);
+        } else {
+            MPU6050_Process_State(dev);
+        }
+    }
+
+    if (i > 0) {
+        dev->gyro_z_offset = sum / i;
+    } else {
+        dev->gyro_z_offset = -14; // Резервне значення з ваших тестів, якщо датчик не відповів
+    }
+    dev->angle_z = 0.0f; // Скидаємо початковий кут в нуль
+}
+/* Стара версія:
 void MPU6050_Calibrate_Gyro_Z(MPU6050_HandleTypeDef *dev, uint16_t samples) {
     int32_t sum = 0;
     uint16_t i = 0;
@@ -122,8 +165,9 @@ void MPU6050_Calibrate_Gyro_Z(MPU6050_HandleTypeDef *dev, uint16_t samples) {
     dev->gyro_z_offset = sum / samples;
     dev->angle_z = 0.0f; // Скидаємо початковий кут в нуль
 }
+*/
 
-//Фінальна версія
+
 void MPU6050_Update_Angle(MPU6050_HandleTypeDef *dev) {
     uint32_t current_time = __HAL_TIM_GET_COUNTER(dev->htim);
     uint32_t dt_ticks;

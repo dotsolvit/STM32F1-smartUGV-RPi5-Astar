@@ -35,13 +35,21 @@ extern "C" {
 extern ADC_HandleTypeDef hadc1;
 
 /* USER CODE BEGIN Private defines */
-
+#define ADC_CHANNEL_BATTERY    ADC_CHANNEL_0
+#define ADC_CHANNEL_SHARP      ADC_CHANNEL_1
 /* USER CODE END Private defines */
 
 void MX_ADC1_Init(void);
 
 /* USER CODE BEGIN Prototypes */
+HAL_StatusTypeDef ADC_UserInit(void);
 
+HAL_StatusTypeDef ADC_ReadChannel(uint32_t channel,
+                                  uint16_t *value);
+
+HAL_StatusTypeDef ADC_ReadAverage(uint32_t channel,
+                                  uint8_t samples,
+                                  uint16_t *average);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

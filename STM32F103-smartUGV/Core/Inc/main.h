@@ -45,6 +45,15 @@ typedef enum {
     ROBOT_STATE_CALIBRATING = 2
 } RobotState_t;
 
+// Визначення статусу машинки (status): "stopped", "moving", "scanning", "calibrating", "arrived".
+typedef enum {
+    ROBOT_STATUS_STOPPED = 0,
+    ROBOT_STATUS_MOVING  = 1,
+	ROBOT_STATUS_SCANNING  = 2,
+    ROBOT_STATUS_CALIBRATING = 3,
+	ROBOT_STATUS_ARRIVED = 4
+} RobotStatus_t;
+
 // Структура однієї точки маршруту (8 байт)
 typedef struct {
     float x;
@@ -99,6 +108,7 @@ typedef struct {
 /* USER CODE BEGIN EC */
 // Оголошуємо, що змінна існує, щоб її бачило переривання в stm32f1xx_it.c
 extern volatile RobotState_t current_robot_state;
+extern volatile RobotStatus_t current_robot_status;
 
 // Наш глобальний маршрут для алгоритму наведення
 extern volatile PathPoint_t robot_path[MAX_PATH_POINTS];
