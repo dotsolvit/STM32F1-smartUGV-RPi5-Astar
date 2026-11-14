@@ -186,9 +186,9 @@ int main(void)
 		// 1. Постійно оновлюємо математику телеметрії (всередині неблокуючі автомати)
 		Telemetry_Update();
 
-	    // 2. Розрахунок плавного руху коліс
+	    // 2. Модуль Пілота з об'єднанням логікі руху по точках маршруту A* та вузького/широкого
+		// сканування в єдиний кінцевий автомат (State Machine)
 	    Pilot_Update();
-
 
 		// 3. Асинхронний таймер відправки результатів на RPi5 через ESP32 кожні 50 мс
 	    volatile uint32_t current_tick = HAL_GetTick();
@@ -199,34 +199,6 @@ int main(void)
 			// Відправляємо чисті, синхронізовані дані з модуля телеметрії
 			STM32_SendTelemetry(robot_x, robot_y, robot_theta_deg, robot_battery_pct, current_robot_status);
 		}
-
-	    // 4. Логіка виконання команд (наприклад, якщо з MQTT прийшов "start")
-	    if (current_robot_state == ROBOT_STATE_MOVING) {
-	    	current_robot_status = ROBOT_STATUS_MOVING;
-	        // Тимчасовий тестовий запуск: їхати вперед на 50% швидкості
-	        Pilot_SetTargetSpeed(70, 70);
-	    } else if (current_robot_state == ROBOT_STATE_STOPPED) {
-	        Pilot_SetTargetSpeed(0, 0);
-	        //Статус зміниться після повної зупинки
-	    }
-	    else if (current_robot_state == ROBOT_STATE_CALIBRATING) {
-	    	current_robot_status = ROBOT_STATUS_CALIBRATING;
-	        STM32_SendTelemetry(robot_x, robot_y, robot_theta_deg, robot_battery_pct, current_robot_status); //Повідомимо про новий стан
-	        Pilot_SetTargetSpeed(-75, 75);
-	        // Даємо плавному розгону 900 мс, щоб мотори гарантовано вийшли на оберти
-	        uint32_t ramp_start = HAL_GetTick();
-	        while (HAL_GetTick() - ramp_start < 900) {
-	            Pilot_Update();
-	        }
-	        // Тепер робот стабільно крутиться, запускаємо блокуюче калібрування на 6 с
-	        Telemetry_Calibration();
-            //Відміняємо команду Калібрувати на Стоп
-	        current_robot_state = ROBOT_STATE_STOPPED;
-	        current_robot_status = ROBOT_STATUS_MOVING;//До зупинки
-	        // Зупиняємо двигуни та повертаємось у стан очікування
-	        Pilot_SetTargetSpeed(0, 0);
-	        //Статус зміниться після повної зупинки
-	    }
 
     /* USER CODE END WHILE */
 

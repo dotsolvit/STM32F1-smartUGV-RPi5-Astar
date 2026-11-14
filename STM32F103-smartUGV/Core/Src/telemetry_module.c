@@ -85,7 +85,7 @@ void Telemetry_Read_ADC(void) {
     filtered_adc_ch0 = Battery_FilterEMA((float)adc_ch0);
 
     // Розраховуємо вольти на основі ПЛАВНОГО значення filtered_adc_ch0
-    float v_pin = (filtered_adc_ch0 * 3.3f) / 4095.0f;
+    float v_pin = (filtered_adc_ch0 * 3.28f) / 4095.0f;
     float v_batt = v_pin * BATT_DIVIDER_RATIO;
 
     // Розрахунок відсотків заряда батареї
