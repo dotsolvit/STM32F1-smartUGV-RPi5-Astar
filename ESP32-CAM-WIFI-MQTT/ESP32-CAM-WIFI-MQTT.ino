@@ -278,6 +278,10 @@ void setup() {
     
     client.setServer(mqtt_server, mqtt_port);
     client.setCallback(mqttCallback);
+
+    //Змінено 17 11 2026
+    // Збільшуємо внутрішній буфер PubSubClient з 256 до 1024 байт!
+    client.setBufferSize(JSON_BUF_SIZE); 
 }
 
 void reconnectMQTT() {
