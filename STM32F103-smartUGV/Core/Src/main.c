@@ -71,6 +71,7 @@ uint8_t robot_battery_pct = 80;
 // Глобальна змінна для Модуля Пілота (щоб він міг бачити відстань у реальному часі)
 volatile uint16_t sharp_distance_raw_adc = 0;
 
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -176,6 +177,7 @@ int main(void)
   Telemetry_Init(); // Ініціалізуємо таймери, одометрію та сенсори
   Pilot_Init();     // Запуск ШІМ моторів
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET); //Вмикаю індикацію завершення ініціалізації
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -199,6 +201,26 @@ int main(void)
 			// Відправляємо чисті, синхронізовані дані з модуля телеметрії
 			STM32_SendTelemetry(robot_x, robot_y, robot_theta_deg, robot_battery_pct, current_robot_status);
 		}
+
+		//Калібрування (блокуючий режим)
+	    if (current_robot_state == ROBOT_STATE_CALIBRATING) {
+	    	current_robot_status = ROBOT_STATUS_CALIBRATING;
+	        STM32_SendTelemetry(robot_x, robot_y, robot_theta_deg, robot_battery_pct, current_robot_status); //Повідомимо про новий стан
+	        Pilot_SetTargetSpeed(-75, 75);
+	        // Даємо плавному розгону 900 мс, щоб мотори гарантовано вийшли на оберти
+	        uint32_t ramp_start = HAL_GetTick();
+	        while (HAL_GetTick() - ramp_start < 900) {
+	            Pilot_Update();
+	        }
+	        // Тепер робот стабільно крутиться, запускаємо блокуюче калібрування на 6 с
+	        Telemetry_Calibration();
+            //Відміняємо команду Калібрувати на Стоп
+	        current_robot_state = ROBOT_STATE_STOPPED;
+	        current_robot_status = ROBOT_STATUS_MOVING;//До зупинки
+	        // Зупиняємо двигуни та повертаємось у стан очікування
+	        Pilot_SetTargetSpeed(0, 0);
+	        //Статус зміниться після повної зупинки
+	    }
 
     /* USER CODE END WHILE */
 

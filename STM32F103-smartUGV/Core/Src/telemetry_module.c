@@ -180,8 +180,8 @@ void Telemetry_Init(void) {
 			compass.y_offset = 0;
 		}
 		if(HP5883_Read(&compass)==HAL_OK) {             // Отримуємо свіжий відкалібрований кут (0..360°)
-			hmpu1.angle_z = compass.heading;   // Перезаписуємо інтегратор гіроскопа
-			robot_theta_deg = compass.heading; // Оновлюємо глобальний курс
+			hmpu1.angle_z = Normalize_Angle_360(compass.heading + 90.0f);   // Перезаписуємо інтегратор гіроскопа+90°
+			robot_theta_deg = Normalize_Angle_360(compass.heading + 90.0f); // Оновлюємо глобальний курс+90°
 		}
     }
 
@@ -210,22 +210,7 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
         }
     }
 }
-/*Статр версія - без напрямку руху
-// Колбек HAL, який викликається автоматично при кожному імпульсі на PB4 або PB5
-void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
-    if (htim->Instance == TIM3) {
-        if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1) {
-            // Пін PB4 - Праве або Ліве колесо.
-            // Якщо робот їде вперед — додаємо тік. (Напрямок руху беремо з Модуля Пілота в майбутньому)
-            left_encoder_total++;
-        }
-        else if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2) {
-            // Пін PB5 - Інше колесо
-            right_encoder_total++;
-        }
-    }
-}
-*/
+
 
 void Telemetry_Update(void) {
     // =================================================================
@@ -263,7 +248,7 @@ void Telemetry_Update(void) {
 
 			// 2. Раз на 100 мс читаємо стабільний кут із компаса
 			if (HP5883_Read(&compass) == HAL_OK) {
-				float mag_angle = Normalize_Angle_360(compass.heading);
+				float mag_angle = Normalize_Angle_360(compass.heading + 90.0f);   // +90°
 
 				// 3. Шукаємо найкоротшу різницю (-180 ... +180)
 				float angle_diff = mag_angle - gyro_angle;
@@ -317,24 +302,5 @@ void Telemetry_Update(void) {
         robot_x += delta_center_distance_m * sinf(theta_rad);
         robot_y += delta_center_distance_m * cosf(theta_rad);
     }
-    ///
 
-
-    /*Стара версія без врахування калібрування
-    // Переводимо кроки кожного колеса в метри
-    float dist_left_m = (float)delta_left * METERS_PER_PULSE;
-    float dist_right_m = (float)delta_right * METERS_PER_PULSE;
-
-    // Середній шлях, пройдений центром робота
-    float delta_center_distance_m = (dist_left_m + dist_right_m) / 2.0f;
-
-    // =================================================================
-    // 3. Трігонометричне оновлення координат X та Y
-    // =================================================================
-    float theta_rad = robot_theta_deg * (PI_F / 180.0f);
-
-    // Тепер координати зміняться ТІЛЬКИ тоді, коли колеса реально прокрутяться!
-    robot_x += delta_center_distance_m * sinf(theta_rad);
-    robot_y += delta_center_distance_m * cosf(theta_rad);
-    */
 }
