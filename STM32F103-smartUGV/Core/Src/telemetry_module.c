@@ -180,8 +180,8 @@ void Telemetry_Init(void) {
 			compass.y_offset = 0;
 		}
 		if(HP5883_Read(&compass)==HAL_OK) {             // Отримуємо свіжий відкалібрований кут (0..360°)
-			hmpu1.angle_z = Normalize_Angle_360(compass.heading + 90.0f);   // Перезаписуємо інтегратор гіроскопа+90°
-			robot_theta_deg = Normalize_Angle_360(compass.heading + 90.0f); // Оновлюємо глобальний курс+90°
+			hmpu1.angle_z = Normalize_Angle_360(compass.heading + 90.0f + WALL_CORNER);   // Перезаписуємо інтегратор гіроскопа+90°+кут стіни
+			robot_theta_deg = Normalize_Angle_360(compass.heading + 90.0f + WALL_CORNER); // Оновлюємо глобальний курс+90°+кут стіни
 		}
     }
 
@@ -248,7 +248,7 @@ void Telemetry_Update(void) {
 
 			// 2. Раз на 100 мс читаємо стабільний кут із компаса
 			if (HP5883_Read(&compass) == HAL_OK) {
-				float mag_angle = Normalize_Angle_360(compass.heading + 90.0f);   // +90°
+				float mag_angle = Normalize_Angle_360(compass.heading + 90.0f + WALL_CORNER); // курс+90°+кут стіни
 
 				// 3. Шукаємо найкоротшу різницю (-180 ... +180)
 				float angle_diff = mag_angle - gyro_angle;
