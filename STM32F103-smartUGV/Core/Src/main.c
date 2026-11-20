@@ -166,7 +166,7 @@ int main(void)
   MX_TIM3_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  HAL_Delay(300); // Даємо 300 мс на заряд конденсаторів та старт периферії
+  HAL_Delay(300); // Даємо 3000 мс на заряд конденсаторів та старт периферії
   __HAL_UART_ENABLE_IT(&huart2, UART_IT_RXNE); // Вмикаємо переривання по прийому байта
   //Ініціалізуємо ADC:
   ADC_UserInit();

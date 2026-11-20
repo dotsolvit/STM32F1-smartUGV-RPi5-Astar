@@ -179,6 +179,9 @@ void Telemetry_Init(void) {
 			compass.x_offset = 0;
 			compass.y_offset = 0;
 		}
+
+		HAL_Delay(1000); // Даємо 1000 мс
+
 		if(HP5883_Read(&compass)==HAL_OK) {             // Отримуємо свіжий відкалібрований кут (0..360°)
 			hmpu1.angle_z = Normalize_Angle_360(compass.heading + 90.0f + WALL_CORNER);   // Перезаписуємо інтегратор гіроскопа+90°+кут стіни
 			robot_theta_deg = Normalize_Angle_360(compass.heading + 90.0f + WALL_CORNER); // Оновлюємо глобальний курс+90°+кут стіни
@@ -214,7 +217,30 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
 
 void Telemetry_Update(void) {
     // =================================================================
-    // 1. Модуль Гіроскопа: Обробка станів та читання MPU6050 (Частота 50 Гц)
+    // 1. Модуль Диференціальної Одометрії
+    // =================================================================
+    // Захищаємо змінні переривань від зміни під час читання (критична секція)
+    __disable_irq();
+    int32_t current_left = left_encoder_total;
+    int32_t current_right = right_encoder_total;
+    __enable_irq();
+
+    // Вираховуємо, скільки імпульсів пройшло з попереднього циклу
+    int32_t delta_left = current_left - last_left_ticks;
+    int32_t delta_right = current_right - last_right_ticks;
+
+    last_left_ticks = current_left;
+    last_right_ticks = current_right;
+
+    // Визначаємо, чи робот фізично стоїть на місці
+    uint8_t is_stationary = (current_robot_status == ROBOT_STATUS_STOPPED ||
+                             current_robot_status == ROBOT_STATUS_ARRIVED) &&
+                            (delta_left == 0 && delta_right == 0);
+
+
+    // =================================================================
+    // 2. Модуль Гіроскопа: Обробка станів та читання MPU6050 (Частота 50 Гц)
+    // та Модуль Компаса(Частота 10 Hz)
     // =================================================================
 
     // Обов'язково викликаємо Process_State для обслуговування I2C конекшну
@@ -233,64 +259,58 @@ void Telemetry_Update(void) {
         }
     }
 
-    // Оновлений блок об'єднання гіроскопа та компаса (Компас опитується на 10 Hz)
-	if (hmpu1.state == MPU_STATE_READY && prev_mpu_state == MPU_STATE_READING_DATA) {
-		// 1. Оновлюємо швидкий кут за гіроскопом (50 Hz)
-		MPU6050_Update_Angle(&hmpu1);
-		float gyro_angle = Normalize_Angle_360(hmpu1.angle_z);
+    if (hmpu1.state == MPU_STATE_READY && prev_mpu_state == MPU_STATE_READING_DATA) {
+        // Завжди викликаємо Update_Angle, щоб оновити таймер dt (TIM2) і не накопичити великий стрибок часу!
+        MPU6050_Update_Angle(&hmpu1);
 
-		// Лічильник для проріджування запитів до компаса (5 * 20мс = 100мс)
-		static uint8_t compass_divider = 0;
-		compass_divider++;
+        if (is_stationary) {
+            // Робот стоїть: жорстко фіксуємо поточний курс і не даємо шуму чи компасу його зсувати
+            hmpu1.angle_z = robot_theta_deg;
+        } else {
+            // Робот рухається або крутиться: працює штатний Sensor Fusion
+            float gyro_angle = Normalize_Angle_360(hmpu1.angle_z);
 
-		if (compass_divider >= 5) {
-			compass_divider = 0; // Скидаємо лічильник
+			// Лічильник для проріджування запитів до компаса (5 * 20мс = 100мс)
+			static uint8_t compass_divider = 0;
+			compass_divider++;
 
-			// 2. Раз на 100 мс читаємо стабільний кут із компаса (як що це не широке сканування, яке
-			// впливає на компас)
-			if (HP5883_Read(&compass) == HAL_OK && current_robot_status != ROBOT_STATUS_SCANNING) {
-				float mag_angle = Normalize_Angle_360(compass.heading + 90.0f + WALL_CORNER); // курс+90°+кут стіни
+			if (compass_divider >= 5) { //(Компас опитується на 10 Hz)
+				compass_divider = 0;    // Скидаємо лічильник
 
-				// 3. Шукаємо найкоротшу різницю (-180 ... +180)
-				float angle_diff = mag_angle - gyro_angle;
-				if (angle_diff > 180.0f)  angle_diff -= 360.0f;
-				if (angle_diff < -180.0f) angle_diff += 360.0f;
+				// 2. Раз на 100 мс читаємо стабільний кут із компаса (як що це не широке сканування, яке
+				// впливає на компас)
+				if (HP5883_Read(&compass) == HAL_OK && current_robot_status != ROBOT_STATUS_SCANNING) {
+					float mag_angle = Normalize_Angle_360(compass.heading + 90.0f + WALL_CORNER); // курс+90°+кут стіни
 
-				// 4. Комплементарний фільтр (коефіцієнт 0.08f оптимальний для 10 Hz)
-				float fused_angle = Normalize_Angle_360(gyro_angle + 0.08f * angle_diff);
+					// 3. Шукаємо найкоротшу різницю (-180 ... +180)
+					float angle_diff = mag_angle - gyro_angle;
+					if (angle_diff > 180.0f)  angle_diff -= 360.0f;
+					if (angle_diff < -180.0f) angle_diff += 360.0f;
 
-				// 5. Оновлюємо інтегратор гіроскопа та глобальний курс
-				hmpu1.angle_z = fused_angle;
-				robot_theta_deg = fused_angle;
+					// 4. Комплементарний фільтр (коефіцієнт 0.08f оптимальний для 10 Hz)
+					float fused_angle = Normalize_Angle_360(gyro_angle + 0.08f * angle_diff);
+
+					// 5. Оновлюємо інтегратор гіроскопа та глобальний курс
+					hmpu1.angle_z = fused_angle;
+					robot_theta_deg = fused_angle;
+				} else {
+					// Якщо компас не відповів — тримаємо курс за гіроскопом
+					hmpu1.angle_z = gyro_angle;
+					robot_theta_deg = gyro_angle;
+				}
 			} else {
-				// Якщо компас не відповів — тримаємо курс за гіроскопом
+				// У проміжках між замірами компаса (4 такти з 5) працюємо суто на швидкому гіроскопі
 				hmpu1.angle_z = gyro_angle;
 				robot_theta_deg = gyro_angle;
 			}
-		} else {
-			// У проміжках між замірами компаса (4 такти з 5) працюємо суто на швидкому гіроскопі
-			hmpu1.angle_z = gyro_angle;
-			robot_theta_deg = gyro_angle;
-		}
+        }
 	}
 	prev_mpu_state = hmpu1.state;
 
     // =================================================================
-    // 3. Модуль Диференціальної Одометрії
+    // 3. Розрахунок координат X та Y (за вже оновленим курсом)
     // =================================================================
-    // Захищаємо змінні переривань від зміни під час читання (критична секція)
-    __disable_irq();
-    int32_t current_left = left_encoder_total;
-    int32_t current_right = right_encoder_total;
-    __enable_irq();
 
-    // Вираховуємо, скільки імпульсів пройшло з попереднього циклу
-    int32_t delta_left = current_left - last_left_ticks;
-    int32_t delta_right = current_right - last_right_ticks;
-
-    last_left_ticks = current_left;
-    last_right_ticks = current_right;
-    ///Нова версія
     // Якщо робот зараз калібрується — не змінюємо глобальні координати X та Y
     if (current_robot_status != ROBOT_STATUS_CALIBRATING) {
         float dist_left_m = (float)delta_left * METERS_PER_PULSE;
