@@ -246,8 +246,9 @@ void Telemetry_Update(void) {
 		if (compass_divider >= 5) {
 			compass_divider = 0; // Скидаємо лічильник
 
-			// 2. Раз на 100 мс читаємо стабільний кут із компаса
-			if (HP5883_Read(&compass) == HAL_OK) {
+			// 2. Раз на 100 мс читаємо стабільний кут із компаса (як що це не широке сканування, яке
+			// впливає на компас)
+			if (HP5883_Read(&compass) == HAL_OK && current_robot_status != ROBOT_STATUS_SCANNING) {
 				float mag_angle = Normalize_Angle_360(compass.heading + 90.0f + WALL_CORNER); // курс+90°+кут стіни
 
 				// 3. Шукаємо найкоротшу різницю (-180 ... +180)

@@ -325,6 +325,32 @@ void USART2_IRQHandler(void)
               }
               else if (current_packet_type == 0xB2) {
                   // Обробка точки маршруту Path (9 байт даних: x(4) + y(4) + is_last(1))
+            	  //Нова версія
+				  if (STM32_GetCRC8((uint8_t*)&temp_path_pkt, sizeof(PathPointPacket_t)) == byte) {
+
+						// Локальний прапорець: 0 - чекаємо першу точку нового маршруту, 1 - іде прийом потоку
+						static uint8_t is_receiving_path = 0;
+
+						if (is_receiving_path == 0) {
+							robot_path_size = 0;       // Гарантовано перезаписуємо масив з нуля
+							robot_new_path_ready = 0;  // Скидаємо прапорець готовності на час прийому
+							is_receiving_path = 1;
+						}
+
+						// Записуємо точку в масив, якщо є вільне місце
+						if (robot_path_size < MAX_PATH_POINTS) {
+							robot_path[robot_path_size].x = temp_path_pkt.x;
+							robot_path[robot_path_size].y = temp_path_pkt.y;
+							robot_path_size++;
+
+							// Якщо ESP32 каже, що це фінальна точка масиву
+							if (temp_path_pkt.is_last == 1) {
+								is_receiving_path = 0;     // Потік завершено, наступна точка почне новий масив
+								robot_new_path_ready = 1;  // Сигнал для Пілота: новий маршрут готовий!
+							}
+						}
+				  }
+            	  /* Стара версія
                   if (STM32_GetCRC8((uint8_t*)&temp_path_pkt, sizeof(PathPointPacket_t)) == byte) {
 
                       // Якщо це найперша точка нового потоку — скидаємо старий лічильник безпечно
@@ -345,6 +371,7 @@ void USART2_IRQHandler(void)
                           }
                       }
                   }
+                  */
               }
               rx_state = RX_STATE_WAIT_AA;
               break;
