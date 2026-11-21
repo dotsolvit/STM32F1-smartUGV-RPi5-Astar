@@ -36,6 +36,9 @@ static int32_t last_right_ticks = 0;
 static uint32_t last_mpu_tick = 0;
 static MPU_State_t prev_mpu_state = MPU_STATE_UNINIT;
 
+//Прапорець який проігнорує «довгий» такт інтегрування одразу після 6-секундного калібрування
+static uint8_t skip_next_gyro_dt = 0;
+
 //EMA фільтр для даних від ADC
 float Battery_FilterEMA(float new_voltage)
 {
@@ -131,9 +134,16 @@ void Telemetry_Calibration(void) {
 
     HAL_FLASH_Lock();
     //
-    HP5883_Read(&compass);             // Отримуємо свіжий відкалібрований кут (0..360°)
-    hmpu1.angle_z = compass.heading;   // Перезаписуємо інтегратор гіроскопа
-    robot_theta_deg = compass.heading; // Оновлюємо глобальний курс
+
+    // 1. Отримуємо свіжий відкалібрований кут із урахуванням повороту датчика на платі (+90°)
+    if (HP5883_Read(&compass) == HAL_OK) {
+        float cal_heading = Normalize_Angle_360(compass.heading + 90.0f + WALL_CORNER);
+        hmpu1.angle_z = cal_heading;   // Перезаписуємо інтегратор гіроскопа
+        robot_theta_deg = cal_heading; // Оновлюємо глобальний курс
+    }
+
+    // 2. Сигналізуємо Telemetry_Update(), щоб наступний замір гіроскопа оновив таймер, але не інтегрував 6-секундний dt
+    skip_next_gyro_dt = 1;
 }
 
 void Telemetry_Init(void) {
@@ -263,7 +273,11 @@ void Telemetry_Update(void) {
         // Завжди викликаємо Update_Angle, щоб оновити таймер dt (TIM2) і не накопичити великий стрибок часу!
         MPU6050_Update_Angle(&hmpu1);
 
-        if (is_stationary) {
+        if (skip_next_gyro_dt) {
+            skip_next_gyro_dt = 0;
+            hmpu1.angle_z = robot_theta_deg; // Скидаємо стрибок після 6-секундної паузи
+        }
+        else if (is_stationary) {
             // Робот стоїть: жорстко фіксуємо поточний курс і не даємо шуму чи компасу його зсувати
             hmpu1.angle_z = robot_theta_deg;
         } else {
