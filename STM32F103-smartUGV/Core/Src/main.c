@@ -61,6 +61,7 @@ volatile uint8_t robot_new_path_ready = 0;
 //Організація асинхронного таймера відправки (50 мс)
 volatile uint32_t last_telemetry_tick = 0;
 const uint32_t TELEMETRY_INTERVAL_MS = 50;
+RobotStatus_t prev_sent_status = (RobotStatus_t)0xFF; // Неіснуючий статус для відправки першого пакета при старті
 
 // Глобальні змінні стану робота (для демонстрації інтеграції)
 float robot_x = 4.0f;
@@ -185,22 +186,28 @@ int main(void)
   while (1)
   {
 
-		// 1. Постійно оновлюємо математику телеметрії (всередині неблокуючі автомати)
+		// 1. 1. Оновлення сенсорів, одометрії та курсу (всередині неблокуючі автомати)
 		Telemetry_Update();
 
-	    // 2. Модуль Пілота з об'єднанням логікі руху по точках маршруту A* та вузького/широкого
-		// сканування в єдиний кінцевий автомат (State Machine)
+	    // 2. Автономна навігація, калібрування, сканер та керування двигунами (автомат стану - State Machine)
 	    Pilot_Update();
 
-		// 3. Асинхронний таймер відправки результатів на RPi5 через ESP32 кожні 50 мс
-	    volatile uint32_t current_tick = HAL_GetTick();
-		if (current_tick - last_telemetry_tick >= TELEMETRY_INTERVAL_MS)
-		{
-			last_telemetry_tick = current_tick;
+	    // 3. Розумна відправка телеметрії (без спаму в стані спокою)
+	    uint32_t current_tick = HAL_GetTick();
+	    uint8_t is_active = (current_robot_status != ROBOT_STATUS_STOPPED &&
+	                         current_robot_status != ROBOT_STATUS_ARRIVED);
 
-			// Відправляємо чисті, синхронізовані дані з модуля телеметрії
-			STM32_SendTelemetry(robot_x, robot_y, robot_theta_deg, robot_battery_pct, current_robot_status);
-		}
+	    if (current_robot_status != prev_sent_status) {
+	        // Миттєва відправка при зміні статусу (початок руху, калібрування або фіксація повної зупинки)
+	        prev_sent_status = current_robot_status;
+	        last_telemetry_tick = current_tick;
+	        STM32_SendTelemetry(robot_x, robot_y, robot_theta_deg, robot_battery_pct, current_robot_status);
+	    }
+	    else if (is_active && (current_tick - last_telemetry_tick >= TELEMETRY_INTERVAL_MS)) {
+	        // Періодична відправка кожні 50 мс тільки під час активних дій
+	        last_telemetry_tick = current_tick;
+	        STM32_SendTelemetry(robot_x, robot_y, robot_theta_deg, robot_battery_pct, current_robot_status);
+	    }
 
 
     /* USER CODE END WHILE */
