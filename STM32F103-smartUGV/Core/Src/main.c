@@ -202,25 +202,6 @@ int main(void)
 			STM32_SendTelemetry(robot_x, robot_y, robot_theta_deg, robot_battery_pct, current_robot_status);
 		}
 
-		//Калібрування (блокуючий режим)
-	    if (current_robot_state == ROBOT_STATE_CALIBRATING) {
-	    	current_robot_status = ROBOT_STATUS_CALIBRATING;
-	        STM32_SendTelemetry(robot_x, robot_y, robot_theta_deg, robot_battery_pct, current_robot_status); //Повідомимо про новий стан
-	        Pilot_SetTargetSpeed(-75, 75);
-	        // Даємо плавному розгону 900 мс, щоб мотори гарантовано вийшли на оберти
-	        uint32_t ramp_start = HAL_GetTick();
-	        while (HAL_GetTick() - ramp_start < 900) {
-	            Pilot_Update();
-	        }
-	        // Тепер робот стабільно крутиться, запускаємо блокуюче калібрування на 6 с
-	        Telemetry_Calibration();
-            //Відміняємо команду Калібрувати на Стоп
-	        current_robot_state = ROBOT_STATE_STOPPED;
-	        current_robot_status = ROBOT_STATUS_MOVING;//До зупинки
-	        // Зупиняємо двигуни та повертаємось у стан очікування
-	        Pilot_SetTargetSpeed(0, 0);
-	        //Статус зміниться після повної зупинки
-	    }
 
     /* USER CODE END WHILE */
 

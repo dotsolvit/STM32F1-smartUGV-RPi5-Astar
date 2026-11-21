@@ -218,6 +218,44 @@ static void Pilot_Navigation_Process(void) {
     }
 
     // 2. Обробка зовнішньої команди СТОП або КАЛІБРУВАННЯ
+	if (current_robot_state != ROBOT_STATE_MOVING) {
+		// Запуск калібрування зі стану спокою
+		if (current_robot_state == ROBOT_STATE_CALIBRATING && nav_state == NAV_IDLE) {
+			current_robot_status = ROBOT_STATUS_CALIBRATING;
+			Pilot_SetTargetSpeed(-75, 75);
+			servo_timer = now; // Використовуємо вільний таймер для відліку 900 мс розгону
+			nav_state = NAV_CALIBRATING_RAMP;
+			return;
+		}
+
+		// Фаза розгону та виконання калібрування
+		if (nav_state == NAV_CALIBRATING_RAMP) {
+			if (now - servo_timer >= 900) {
+				Telemetry_Calibration(); // Блокуюче калібрування на 6 с (колеса вже стабільно крутяться)
+
+				current_robot_state = ROBOT_STATE_STOPPED;
+				current_robot_status = ROBOT_STATUS_MOVING; // До повної зупинки коліс
+				Enter_Coasting_State(STOP_REASON_USER_CMD, 0);
+			}
+			return;
+		}
+
+		// Якщо прийшов СТОП під час руху — переходимо в інерційний вибіг
+		if (nav_state == NAV_TURNING || nav_state == NAV_DRIVING) {
+			Pilot_SetServoAngle(0);
+			Enter_Coasting_State(STOP_REASON_USER_CMD, 0);
+			return;
+		}
+
+		// Даємо штатно завершитись вибігу або панорамі
+		if (nav_state != NAV_COASTING && nav_state != NAV_WIDE_SCANNING) {
+			nav_state = NAV_IDLE;
+			return;
+		}
+	}
+
+    /* Старий пункт 2.
+    // 2. Обробка зовнішньої команди СТОП або КАЛІБРУВАННЯ
     if (current_robot_state != ROBOT_STATE_MOVING) {
         if (nav_state == NAV_TURNING || nav_state == NAV_DRIVING) {
             Pilot_SetServoAngle(0);
@@ -229,6 +267,7 @@ static void Pilot_Navigation_Process(void) {
             return;
         }
     }
+    */
 
     // 3. Очікування старту
     if (nav_state == NAV_IDLE) {
@@ -393,7 +432,7 @@ static void Pilot_Navigation_Process(void) {
         // В. Розрахунок базової швидкості з урахуванням зони уповільнення (0.15 м)
         int16_t base_speed = DRIVE_BASE_SPEED;
         if (dist_to_wp_m < SLOWDOWN_DISTANCE_M) {
-            float ratio = dist_to_wp_m / SLOWDOWN_DISTANCE_M;
+            //float ratio = dist_to_wp_m / SLOWDOWN_DISTANCE_M;
             base_speed = MOTOR_MIN_PWM; // + (int16_t)((DRIVE_BASE_SPEED - MOTOR_MIN_PWM) * ratio); Прибрав це
         }
 

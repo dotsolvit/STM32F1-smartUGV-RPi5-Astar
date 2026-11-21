@@ -46,7 +46,8 @@ typedef enum {
     NAV_TURNING,
     NAV_DRIVING,
     NAV_COASTING,       // Рух по інерції до повної зупинки коліс
-    NAV_WIDE_SCANNING
+    NAV_WIDE_SCANNING,
+	NAV_CALIBRATING_RAMP  // Плавний розгін перед калібруванням компаса
 } NavState_t;
 
 typedef enum {
